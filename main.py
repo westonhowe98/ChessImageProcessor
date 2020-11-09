@@ -104,6 +104,7 @@ def IsMyTurn():
     if Timer2 != None:
         x, y = Timer2
         if y > (1080/2):
+            GetBase()
             return True
 
     return False
@@ -133,6 +134,7 @@ def Overhead():
         time.sleep(5)
 
     if pyautogui.locateCenterOnScreen("NewOpponent.png") != None:
+        time.sleep(8)
         pyautogui.moveTo(pyautogui.locateCenterOnScreen("NewOpponent.png"))
         pyautogui.click()
 
