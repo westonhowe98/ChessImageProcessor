@@ -10,11 +10,13 @@ from colormath.color_conversions import convert_color
 from colormath.color_diff import delta_e_cie2000
 import chess
 import stockfish
+import random
 import sys
+import time
 
 FEN_START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
-MoveDelay = 0.3
+MoveDelay = 0.15
 ConfidenceLevel = 0.80
 
 ColorThreadhold = 10
@@ -26,7 +28,6 @@ DarkSquareRGBAdj = (209, 174, 137)
 LightSquareRGB = (240, 217, 181)
 
 A1 = (621, 854)
-
 SquareSize = 92
 
 #PieceImageDir = "PieceIcons/"
@@ -47,18 +48,27 @@ ReplaceColors = [
 Colors = {"White", "Black"}
 PieceTypes = {"King", "Queen", "Rook", "Bishop", "Knight", "Pawn"}
 
-stockfish = stockfish.Stockfish("stockfish_20090216_x64_bmi2.exe")
-stockfish.set_skill_level(25)
-stockfish.set_depth(18)
-#stockfish = Stockfish(parameters={"Threads": 2, "Minimum Thinking Time": 30})
+stockfish = stockfish.Stockfish("stockfish_20090216_x64_bmi2.exe", parameters={"Threads": 4, "Minimum Thinking Time": 5, "Hash" : 16})
+stockfish.set_skill_level(5)
+stockfish.set_depth(8)
 
 UseCorrespondence = True
 
 CurrentFEN = ""
-
 IsWhite = True
+DoMove = False
+
+CurrentPieces = {}
+CurrentFlippedPieces = {}
+
+Icons = {}
+Castles = {}
 
 def main():
+    print(stockfish.get_parameters())
+
+    LoadIcons()
+    Reset()
     #print(stockfish.get_parameters())
     #print(InvertCoordinate("a1")) # h8
     #print(InvertCoordinate("h8"))  # a1
@@ -67,6 +77,20 @@ def main():
     #DebugCycle()
     Play()
     #DebugPosition()
+
+def Reset():
+    global Castles
+    Both = (True, True) # King side, queenside
+    Castles["White"] = Both
+    Castles["Black"] = Both
+
+def GetDelay(Destination):
+    return 0.01
+
+    if Destination.upper() in CurrentFlippedPieces:
+        return 0
+
+    return random.betavariate(2, 7) * 8
 
 def IsRed(Color):
     r, g, b = Color
@@ -79,16 +103,35 @@ def IsRed(Color):
 
     return False
 
+def LoadIcons():
+    global Icons
+
+    for Color in Colors:
+        for PieceType in PieceTypes:
+            IconFileName = PieceImageDir + Color + PieceType + ".png"
+            template = cv2.imread(IconFileName)
+            templateG = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+            Icons[IconFileName] = templateG
+
 def GetBase():
     global A1
     global IsWhite
 
-    if pyautogui.locateCenterOnScreen("A1AsWhite.png") == None:
-        IsWhite = False
-        A1 = pyautogui.locateCenterOnScreen("H8AsBlack.png")
-    else:
-        IsWhite = True
-        A1 = pyautogui.locateCenterOnScreen("A1AsWhite.png")
+    Reset()
+
+    while True:
+        A1White = pyautogui.locateCenterOnScreen("A1AsWhite.png")
+        H8Black = pyautogui.locateCenterOnScreen("H8AsBlack.png")
+
+        if A1White != None:
+            A1 = A1White
+            IsWhite = True
+            break
+
+        if H8Black != None:
+            A1 = H8Black
+            IsWhite = False
+            break
 
     print("Is White:", IsWhite)
     print(A1)
@@ -122,7 +165,6 @@ def WaitForTurn():
             break
 
         Overhead()
-        time.sleep(2)
 
 def Overhead():
     if pyautogui.locateCenterOnScreen("ClaimVictory.png") != None:
@@ -131,10 +173,8 @@ def Overhead():
         time.sleep(0.1)
         pyautogui.moveTo(10, 10)
 
-        time.sleep(5)
-
     if pyautogui.locateCenterOnScreen("NewOpponent.png") != None:
-        time.sleep(8)
+        time.sleep(2)
         pyautogui.moveTo(pyautogui.locateCenterOnScreen("NewOpponent.png"))
         pyautogui.click()
 
@@ -145,34 +185,54 @@ def Overhead():
             if pyautogui.locateCenterOnScreen("H8AsBlack.png") != None:
                 break
 
-            time.sleep(5)
             GetBase()
 
 def Play():
-    if not IsWhite:
-        while True:
-            Pieces = MapPieces()
-            print(Pieces)
-            FEN = GetFEN(Pieces)
-            print(FEN)
-            if FEN != FEN_START:
-                break
-            time.sleep(1)
+    #if not IsWhite:
+    #    while True:
+    #        Pieces = MapPieces()
+    #        #print(Pieces)
+    ##        FEN = GetFEN(Pieces)
+     #       #print(FEN)
+     #       if FEN != FEN_START:
+     #           break
 
     while True:
+        start = time.time()
         Pieces = MapPieces()
-        print(Pieces)
+        end = time.time()
+        PieceMappingTime = end - start
+        #print(Pieces)
+
+        start = time.time()
         FEN = GetFEN(Pieces)
-        print(FEN)
+        #print(FEN)
+        end = time.time()
+        FENGenerationTime = end - start
+
+        start = time.time()
         BestMove = GetBestMove(FEN)
-        print(BestMove)
+        end = time.time()
+        BestMoveTime =  end - start
+        #print(BestMove)
+
+        TotalTime = PieceMappingTime + FENGenerationTime + BestMoveTime
+
+        print()
+        print("PieceMappingTime: ", PieceMappingTime)
+        print("FENGenerationTime: ", FENGenerationTime)
+        print("BestMoveTime: ", BestMoveTime)
+        print("TotalTime", TotalTime)
+        print()
+
         Move(BestMove)
-        time.sleep(1)
         WaitForTurn()
 
 def GetBestMove(FEN):
     stockfish.set_fen_position(FEN)
+    #print(stockfish.get_board_visual())
     #print(stockfish.get_evaluation())
+
     return stockfish.get_best_move()
 
 def DisplayPieceMap(PieceType, BoardImg):
@@ -213,6 +273,8 @@ def GoToSquare(StrCoords):
 def Move(StrMove):
     Origin = StrMove[0:2]
     Destination = StrMove[2::]
+
+    time.sleep(GetDelay(Destination))
 
     GoToSquare(Origin)
     pyautogui.dragTo(*GetSquare(Destination), MoveDelay, button='left')
@@ -313,9 +375,9 @@ def CaptureBoard():
     return FileName
 
 def MapPiece(Color, PieceType, BoardImg):
+    global Icons
     IconFileName = PieceImageDir + Color + PieceType + ".png"
-    template = cv2.imread(IconFileName)
-    templateG = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+    templateG = Icons[IconFileName]
     w, h = templateG.shape[::-1]
 
     res = cv2.matchTemplate(BoardImg, templateG, cv2.TM_CCOEFF_NORMED)
@@ -371,6 +433,12 @@ def MapPieces():
         print(Pieces)
         return MapPieces()
 
+    global CurrentPieces
+    global CurrentFlippedPieces
+
+    CurrentPieces = Pieces
+    CurrentFlippedPieces = FlipPieceArray(Pieces)
+
     return Pieces
 
 def DebugCycle():
@@ -419,6 +487,44 @@ def GetFENSymbol(Piece):
 
     return Symbol
 
+def DoCastleLogic(FlippedPieceArray, Color):
+    global Castles
+    Rooks = {}
+    Kings = {}
+
+    Rooks["Black"] = ("H8", "A8") # King side, Queen Side
+    Rooks["White"] = ("H1", "A1")  # King side, Queen Side
+    Kings["Black"] = "E8"
+    Kings["White"] = "E1"
+
+    # If the king moves then all castles are gone
+    if Castles[Color][0] or Castles[Color][1]:
+        if not Kings[Color] in FlippedPieceArray:
+            Castles[Color] = (False, False)
+
+    KingRook, QueenRook = Rooks[Color]
+
+    OutputStr = ""
+    if Castles[Color][0]: # King side
+        if not KingRook in FlippedPieceArray:
+            Castles[Color] = (False, Castles[Color][1])
+        else:
+            OutputStr += "K"
+
+    if Castles[Color][1]:  # Queen side
+        if not QueenRook in FlippedPieceArray:
+            Castles[Color] = (Castles[Color][0], False)
+        else:
+            OutputStr += "Q"
+
+    if Color == "Black":
+        return OutputStr.lower()
+
+    if len(OutputStr) > 0:
+        OutputStr += " "
+
+    return OutputStr
+
 def GetFEN(PieceArray):
     FileFen = []
     FlippedArray = FlipPieceArray(PieceArray)
@@ -448,22 +554,11 @@ def GetFEN(PieceArray):
     if not IsWhite:
         ColorSym = "b"
 
-    Castles = " "
-
-    if "E1" in FlippedArray:
-        WhiteKing = FlippedArray["E1"]
-        Color, PieceType = WhiteKing
-        if Color == "White" and PieceType == "King":
-            Castles += "KQ"
-
-    if "E8" in FlippedArray:
-        BlackKing = FlippedArray["E8"]
-        Color, PieceType = BlackKing
-        if Color == "Black" and PieceType == "King":
-            Castles += "kq"
+    CastleStr = DoCastleLogic(FlippedArray, "White")
+    CastleStr += DoCastleLogic(FlippedArray, "Black")
 
 
-    return FinalFen[:-1] + " " + ColorSym + Castles + " - 0 1"
+    return FinalFen[:-1] + " " + ColorSym + " " + CastleStr + "- 0 1"
 
 def DebugPosition():
     while True:
