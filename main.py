@@ -1,4 +1,7 @@
 import cv2
+from PixelSignature import *
+import keyboard
+from ChessBotSettings import *
 import numpy as np
 from matplotlib import pyplot as plt
 import time
@@ -14,69 +17,50 @@ import random
 import sys
 import time
 
-FEN_START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-
-MoveDelay = 0.15
-ConfidenceLevel = 0.80
-
-ColorThreadhold = 10
-
-OriginalPieceSize = 60
-
-DarkSquareRGB = (181, 136, 99)
-DarkSquareRGBAdj = (209, 174, 137)
-LightSquareRGB = (240, 217, 181)
-
-A1 = (621, 854)
-SquareSize = 92
-
-#PieceImageDir = "PieceIcons/"
-PieceImageDir = "CustomPieceIcons/"
-
-Files = "ABCDEFGH"
-Ranks = "12345678"
-
-ClockBackgroundLocation = (1344, 706)
-ClockBackgroundColor = (208, 224, 189)
-
-ReplaceColors = [
-    DarkSquareRGB,
-    (170,162,58),
-    (205,210,106)
-]
-
-Colors = {"White", "Black"}
-PieceTypes = {"King", "Queen", "Rook", "Bishop", "Knight", "Pawn"}
-
 stockfish = stockfish.Stockfish("stockfish_20090216_x64_bmi2.exe", parameters={"Threads": 4, "Minimum Thinking Time": 5, "Hash" : 16})
-stockfish.set_skill_level(5)
-stockfish.set_depth(8)
-
-UseCorrespondence = True
+stockfish.set_skill_level(9)
+stockfish.set_depth(10)
 
 CurrentFEN = ""
 IsWhite = True
 DoMove = False
 
-CurrentPieces = {}
 CurrentFlippedPieces = {}
 
 Icons = {}
 Castles = {}
 
 def main():
-    print(stockfish.get_parameters())
+    #GetPieceTemplates()
+    #LoadTemplates()
 
-    LoadIcons()
+    #GenerateSignatures()
+    Startup()
+    Play()
+
+def Startup():
+    LoadSignatures()
+
     Reset()
-    #print(stockfish.get_parameters())
-    #print(InvertCoordinate("a1")) # h8
-    #print(InvertCoordinate("h8"))  # a1
+
     Overhead()
     GetBase()
-    #DebugCycle()
-    Play()
-    #DebugPosition()
+
+def GetPieceTemplates():
+    global CurrentFlippedPieces
+    Reset()
+    GetBase()
+
+    BoardImg = CaptureBoard()
+
+    for Piece, Coord in PieceCoordinates.items():
+        TL, BR = GetRelativeSquareCorners(Coord)
+        TLX, TLY = TL
+        BRX, BRY = BR
+
+        SquareImg = BoardImg[TLY:BRY, TLX:BRX]
+        Filename = PieceImageDir + Piece + ".png"
+        cv2.imwrite(Filename, SquareImg)
 
 def Reset():
     global Castles
@@ -85,12 +69,12 @@ def Reset():
     Castles["Black"] = Both
 
 def GetDelay(Destination):
-    return 0.01
+    return 0.001
 
     if Destination.upper() in CurrentFlippedPieces:
-        return 0
+        return 0.001
 
-    return random.betavariate(2, 7) * 8
+    return random.betavariate(2, 5) * 8
 
 def IsRed(Color):
     r, g, b = Color
@@ -103,16 +87,6 @@ def IsRed(Color):
 
     return False
 
-def LoadIcons():
-    global Icons
-
-    for Color in Colors:
-        for PieceType in PieceTypes:
-            IconFileName = PieceImageDir + Color + PieceType + ".png"
-            template = cv2.imread(IconFileName)
-            templateG = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-            Icons[IconFileName] = templateG
-
 def GetBase():
     global A1
     global IsWhite
@@ -120,30 +94,46 @@ def GetBase():
     Reset()
 
     while True:
-        A1White = pyautogui.locateCenterOnScreen("A1AsWhite.png")
-        H8Black = pyautogui.locateCenterOnScreen("H8AsBlack.png")
+        A1White = pyautogui.locateCenterOnScreen(ImageResourceDir + "A1AsWhiteSimplified.png")
+        H8Black = pyautogui.locateCenterOnScreen(ImageResourceDir + "H8AsBlackSimplified.png")
+
+        Offset = (SquareSize - (RootImageSize // 2)) // 2
 
         if A1White != None:
             A1 = A1White
             IsWhite = True
+
+            x, y = A1
+            x += Offset
+            y -= Offset
+
+            A1 = (x, y)
             break
 
         if H8Black != None:
             A1 = H8Black
             IsWhite = False
+
+            x, y = A1
+            x += Offset
+            y -= Offset
+
+            A1 = (x, y)
             break
+
+
 
     print("Is White:", IsWhite)
     print(A1)
 
 def IsMyTurn():
-    Timer = pyautogui.locateCenterOnScreen("TimerSource.png")
+    Timer = pyautogui.locateCenterOnScreen(ImageResourceDir + "TimerSource.png")
     if Timer != None:
         x, y = Timer
         if y > (1080/2):
             return True
 
-    Timer2 = pyautogui.locateCenterOnScreen("TimerSource2.png")
+    Timer2 = pyautogui.locateCenterOnScreen(ImageResourceDir + "TimerSource2.png")
     if Timer2 != None:
         x, y = Timer2
         if y > (1080/2):
@@ -153,13 +143,19 @@ def IsMyTurn():
     return False
 
 def WaitForTurn():
-    FEN = GetFEN(MapPieces())
+    FEN = GetFEN(MapBoardSquares())
+
+    while FEN == FEN_START and not IsWhite:
+        FEN = GetFEN(MapBoardSquares())
 
     while True:
+        if keyboard.is_pressed('q'):
+            quit()
+
         if IsMyTurn():
             break
 
-        Pieces = MapPieces()
+        Pieces = MapBoardSquares()
         NewFEN = GetFEN(Pieces)
         if(NewFEN != FEN):
             break
@@ -167,61 +163,57 @@ def WaitForTurn():
         Overhead()
 
 def Overhead():
-    if pyautogui.locateCenterOnScreen("ClaimVictory.png") != None:
-        pyautogui.moveTo(pyautogui.locateCenterOnScreen("ClaimVictory.png"))
+
+    if pyautogui.locateCenterOnScreen(ImageResourceDir + "ClaimVictory.png") != None:
+        pyautogui.moveTo(pyautogui.locateCenterOnScreen(ImageResourceDir + "ClaimVictory.png"))
         pyautogui.click()
         time.sleep(0.1)
         pyautogui.moveTo(10, 10)
 
-    if pyautogui.locateCenterOnScreen("NewOpponent.png") != None:
+    if pyautogui.locateCenterOnScreen(ImageResourceDir + "NewOpponent.png") != None:
         time.sleep(2)
-        pyautogui.moveTo(pyautogui.locateCenterOnScreen("NewOpponent.png"))
+        pyautogui.moveTo(pyautogui.locateCenterOnScreen(ImageResourceDir + "NewOpponent.png"))
         pyautogui.click()
 
+        time.sleep(2)
+
+
         while True:
-            if pyautogui.locateCenterOnScreen("A1AsWhite.png") != None:
+            if pyautogui.locateCenterOnScreen(ImageResourceDir + "A1AsWhiteSimplified.png") != None:
                 break
 
-            if pyautogui.locateCenterOnScreen("H8AsBlack.png") != None:
+            if pyautogui.locateCenterOnScreen(ImageResourceDir + "H8AsBlackSimplified.png") != None:
                 break
 
             GetBase()
 
 def Play():
-    #if not IsWhite:
-    #    while True:
-    #        Pieces = MapPieces()
-    #        #print(Pieces)
-    ##        FEN = GetFEN(Pieces)
-     #       #print(FEN)
-     #       if FEN != FEN_START:
-     #           break
+    print("Starting Play")
+
+    WaitForTurn()
 
     while True:
+        print()
         start = time.time()
-        Pieces = MapPieces()
+        Pieces = MapBoardSquares()
         end = time.time()
         PieceMappingTime = end - start
-        #print(Pieces)
+        print("PieceMappingTime: ", PieceMappingTime, Pieces)
 
         start = time.time()
         FEN = GetFEN(Pieces)
-        #print(FEN)
         end = time.time()
         FENGenerationTime = end - start
+        print("FENGenerationTime: ", FENGenerationTime, FEN)
 
         start = time.time()
         BestMove = GetBestMove(FEN)
         end = time.time()
         BestMoveTime =  end - start
-        #print(BestMove)
+        print("BestMoveTime: ", BestMoveTime, BestMove)
 
         TotalTime = PieceMappingTime + FENGenerationTime + BestMoveTime
 
-        print()
-        print("PieceMappingTime: ", PieceMappingTime)
-        print("FENGenerationTime: ", FENGenerationTime)
-        print("BestMoveTime: ", BestMoveTime)
         print("TotalTime", TotalTime)
         print()
 
@@ -234,14 +226,6 @@ def GetBestMove(FEN):
     #print(stockfish.get_evaluation())
 
     return stockfish.get_best_move()
-
-def DisplayPieceMap(PieceType, BoardImg):
-    for Color in Colors:
-        DisplayMap(Color, PieceType, BoardImg)
-
-def DisplayMap(Color, PieceType, BoardImg):
-    Coords = MapPiece(Color, PieceType, BoardImg)
-    print("Color:", Color, "PieceType:", PieceType, "Coords:", Coords)
 
 def GetSquareCoords(x, y):
     ax = A1[0]
@@ -271,90 +255,42 @@ def GoToSquare(StrCoords):
     pyautogui.moveTo(*GetSquare(StrCoords))
 
 def Move(StrMove):
+    if not DoMoves:
+        return
+
     Origin = StrMove[0:2]
     Destination = StrMove[2::]
 
     time.sleep(GetDelay(Destination))
 
     GoToSquare(Origin)
-    pyautogui.dragTo(*GetSquare(Destination), MoveDelay, button='left')
+    pyautogui.click()
+    GoToSquare(Destination)
+    pyautogui.click()
+    #pyautogui.dragTo(*GetSquare(Destination), MoveDelay, button='left')
 
     if len(Destination) > 2:
         time.sleep(0.75)
         pyautogui.click()
 
-def ConvertColorToDouble(Color):
+    time.sleep(0.2)
+
+def ConvertColorOrder(Color):
     r, g, b = Color
+    return b, g, r
 
-    return sRGBColor(r/255, g/255, b/255)
+def SanitizeImage(Img):
+    LightSquareBGR = ConvertColorOrder(LightSquareRGB)
+    DarkSquareBGR = ConvertColorOrder(DarkSquareRGB)
 
-def GetColorDifference(C1, C2):
-    # Convert from RGB to Lab Color Space
-    color1_lab = convert_color(ConvertColorToDouble(C1), LabColor)
+    Img[np.where((Img == DarkSquareBGR).all(axis = 2))] = LightSquareBGR
 
-    # Convert from RGB to Lab Color Space
-    color2_lab = convert_color(ConvertColorToDouble(C2), LabColor)
-
-    # Find the color difference
-    delta_e = delta_e_cie2000(color1_lab, color2_lab)
-
-    return delta_e
-
-def SanitizeImage(ImageName):
-    im = Image.open(ImageName)
-    pixels = im.load()
-
-    width, height = im.size
-    for x in range(width):
-        for y in range(height):
-            currentColor = pixels[x, y]
-            if currentColor in ReplaceColors or IsRed(currentColor):
-                pixels[x, y] = LightSquareRGB
-            #diff = GetColorDifference(currentColor, DarkSquareRGB)
-            #if diff < ColorThreadhold:
-            #   pixels[x, y] = LightSquareRGB
-
-    im.save(ImageName)
-
-def CaptureSquare(StrCoords, FileName):
-    x, y = GetSquareCoords(*MapCoords(StrCoords))
-    Left = x - (SquareSize / 2)
-    Top = y - (SquareSize / 2) - 1
-    Width = SquareSize
-    Height = SquareSize
-    Region = (Left, Top, Width, Height)
-
-    pyautogui.screenshot(FileName, region=Region)
-    SanitizeImage(FileName)
-    ConvertToGrey(FileName)
-
-def GetPieceImages():
-    PieceCoords = {
-        "White" : {
-            "King": "e1",
-            "Queen": "d1",
-            "Rook": "a1",
-            "Bishop": "c1",
-            "Knight": "b1",
-            "Pawn": "a2"
-        },
-      "Black" : {
-            "King": "e8",
-            "Queen": "d8",
-            "Rook": "a8",
-            "Bishop": "c8",
-            "Knight": "b8",
-            "Pawn": "a7"
-        }
-    }
-
-    Images = {}
-    for Color in Colors:
-        ColorImages = {}
-        for PieceType in PieceTypes:
-            FileName = PieceImageDir + Color + PieceType + ".png"
-            ColorImages[PieceType] = CaptureSquare(PieceCoords[Color][PieceType], FileName)
-        Images[Color] = ColorImages
+def GetCoordList():
+    Coords = []
+    for Rank in Ranks:
+        for File in Files:
+            Coords.append(File + Rank)
+    return Coords
 
 def CaptureBoard():
     TopLeftCoord = "a8"
@@ -364,15 +300,23 @@ def CaptureBoard():
 
     x, y = GetSquareCoords(*MapCoords(TopLeftCoord))
     Left = x - (SquareSize / 2)
-    Top = y - (SquareSize / 2) - 1
+    Top = y - (SquareSize / 2)
     Width = SquareSize * 8
     Height = SquareSize * 8
     Region = (Left, Top, Width, Height)
     FileName = "BoardCapture.png"
-    pyautogui.screenshot(FileName, region=Region)
-    SanitizeImage(FileName)
 
-    return FileName
+    pyautogui.screenshot(FileName, region=Region)
+
+    BoardImg = cv2.imread(FileName)
+
+    #SanitizeImage(BoardImg)
+
+    #BoardImg = cv2.cvtColor(BoardImg, cv2.COLOR_BGR2GRAY)
+    #SimplifyImage(BoardImg)
+    #cv2.imwrite(FileName, BoardImg)
+
+    return BoardImg
 
 def MapPiece(Color, PieceType, BoardImg):
     global Icons
@@ -397,9 +341,6 @@ def MapPiece(Color, PieceType, BoardImg):
 
         Coords.append(xc + yc)
 
-
-    #cv2.imwrite('res.png', BoardImg)
-
     Coords = list(set(Coords))
 
     if not IsWhite:
@@ -411,6 +352,67 @@ def MapPiece(Color, PieceType, BoardImg):
 
     Coords.sort()
     return Coords
+
+def CheckSignatureMatch(SquareImg, Filename):
+    Template = Templates[Filename]
+    x, y = PixelSignatures[Filename]
+    Signature = Template[y, x]
+
+    SquareImgSignature = SquareImg[y, x]
+
+    # print(Filename, (x, y), Signature, SquareImgSignature, Coord)
+
+    return (Signature == SquareImgSignature).all()
+
+def MapBoardSquare(SquareImg, Coord):
+    for Color in Colors:
+        for PieceType in PieceTypes:
+            Filename = PieceImageDir + Color + PieceType + ".png"
+            if Filename in Templates and Filename in PixelSignatures:
+                # If the signature matches return the piece type
+                if CheckSignatureMatch(SquareImg, Filename):
+                    #cv2.imshow(Coord, SquareImg)
+                    #cv2.waitKey(0)
+                    #cv2.destroyAllWindows()
+                    return (Color, PieceType)
+
+    return None
+
+def MapBoardSquares():
+    global CurrentFlippedPieces
+
+    BoardImg = CaptureBoard()
+    Coords = GetCoordList()
+    Pieces = {}
+
+    for Coord in Coords:
+        TL, BR = GetRelativeSquareCorners(Coord)
+        TLX, TLY = TL
+        BRX, BRY = BR
+
+        SquareImg = BoardImg[TLY:BRY, TLX:BRX]
+
+        BoardOccupant = MapBoardSquare(SquareImg, Coord)
+
+        if BoardOccupant != None:
+            Pieces[Coord] = BoardOccupant
+
+        CurrentFlippedPieces = Pieces
+
+    return Pieces
+
+def GetRelativeSquareCorners(Coord):
+    x, y = MapCoords(Coord)
+
+    FullImageSize = 8 * SquareSize
+
+    X1 = x * SquareSize
+    Y1 = SquareSize * (7 - y)
+
+    TopLeft = (X1, Y1)
+    BottomRight = (X1 + SquareSize, Y1 + SquareSize)
+
+    return (TopLeft, BottomRight)
 
 def ConvertToGrey(Filename):
     img = cv2.imread(Filename)
@@ -433,10 +435,8 @@ def MapPieces():
         print(Pieces)
         return MapPieces()
 
-    global CurrentPieces
     global CurrentFlippedPieces
 
-    CurrentPieces = Pieces
     CurrentFlippedPieces = FlipPieceArray(Pieces)
 
     return Pieces
@@ -518,16 +518,18 @@ def DoCastleLogic(FlippedPieceArray, Color):
             OutputStr += "Q"
 
     if Color == "Black":
-        return OutputStr.lower()
+        if len(OutputStr) > 0:
+            OutputStr += " "
 
-    if len(OutputStr) > 0:
-        OutputStr += " "
+        return OutputStr.lower()
 
     return OutputStr
 
 def GetFEN(PieceArray):
     FileFen = []
-    FlippedArray = FlipPieceArray(PieceArray)
+    #FlippedArray = FlipPieceArray(PieceArray)
+    FlippedArray = PieceArray
+
     for Rank in Ranks:
         Blanks = 0
         Fen = ""
